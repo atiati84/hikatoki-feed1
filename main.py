@@ -9,9 +9,12 @@ client.login(handle, password)
 
 print("ログイン成功")
 
+# 新しい書き方（params を使う）
 res = client.app.bsky.feed.search_posts(
-    q="ヒカトキ",
-    limit=5
+    params={
+        "q": "ヒカトキ",
+        "limit": 5
+    }
 )
 
 for post in res.posts:
