@@ -20,8 +20,7 @@ client.login(handle, password)
 KEYWORDS = [
     "ヒカトキ",
     "光时",
-    "hktk",
-    "guangshi"
+    "hktk"
 ]
 
 # --- 除外したいワードのリストを追加 ---
