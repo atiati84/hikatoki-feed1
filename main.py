@@ -24,6 +24,11 @@ KEYWORDS = [
     "guangshi"
 ]
 
+# --- 除外したいワードのリストを追加 ---
+BAD_WORDS = [
+    "母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼"
+]
+
 # --- エンドポイント1: DIDの本人確認用 (追加) ---
 @app.route("/.well-known/did.json")
 def did_json():
@@ -62,19 +67,29 @@ def get_feed_skeleton():
     for p in posts:
         unique[p.uri] = p
     posts = list(unique.values())
+    # --- フィルタリング処理を追加 ---
+    filtered_posts = []
+    for p in unique.values():
+        # 投稿本文(text)を取得
+        text = p.record.text if hasattr(p, 'record') else ""
+        
+        # BAD_WORDSが含まれているかチェック
+        is_bad = any(bad_word in text for bad_word in BAD_WORDS)
+        
+        # 含まれていなければリストに追加
+        if not is_bad:
+            filtered_posts.append(p)
 
+    # フィルタリング後のリストをソート
     # 人気順（いいね + リポスト）
-    posts.sort(
+    filtered_posts.sort(
         key=lambda p: (p.like_count or 0) + (p.repost_count or 0),
         reverse=True
     )
-
     # 形式を整える
-    feed = [{"post": p.uri} for p in posts[:50]]
+    feed = [{"post": p.uri} for p in filtered_posts[:50]]
+    return jsonify({"feed": feed})
 
-    return jsonify({
-        "feed": feed
-    })
 
 # --- エンドポイント3: サーバーの生存確認用（任意） ---
 @app.route("/")
