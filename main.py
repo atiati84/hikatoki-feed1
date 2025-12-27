@@ -1,4 +1,3 @@
-
 import os
 import time
 from datetime import datetime, timezone
@@ -16,8 +15,8 @@ client = Client()
 client.login(os.environ.get("BSKY_HANDLE"), os.environ.get("BSKY_APP_PASSWORD"))
 
 # キーワードと除外ワード
-KEYWORDS = ["ヒカトキ", "光时", "hktk"]
-BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊","暗河传"]
+KEYWORDS = ["ヒカトキ", "hktk"]
+BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊","暗河传","bandcamp"]
 
 # --- キャッシュ用の変数 ---
 cache_posts = []
