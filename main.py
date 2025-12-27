@@ -1,3 +1,4 @@
+
 import os
 import time
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄
 # --- キャッシュ用の変数 ---
 cache_posts = []
 cache_time = 0
-CACHE_DURATION = 60  # 60秒間キャッシュを保持
+CACHE_DURATION = 20  # ○秒間キャッシュを保持
 
 # --- 投稿の取得とフィルタリング ---
 def get_filtered_posts():
@@ -37,11 +38,25 @@ def get_filtered_posts():
     all_posts = []
     for word in KEYWORDS:
         try:
-            # 1ワードあたり多めに取得（フィルタで減るため）
-            res = client.app.bsky.feed.search_posts(params={"q": word, "limit": 50})
-            all_posts.extend(res.posts)
+
+            # 修正：キーワードを " で囲んでフレーズ検索にする
+            # 例: "光时" という塊で探すように指示
+            query = f'"{word}"'
+            res = client.app.bsky.feed.search_posts(params={"q": query, "limit": 50})
+            # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
+
+            for p in res.posts:
+                text = (p.record.text or "").lower()
+                # 塊として含まれているか、または画像説明欄(alt)に含まれているか
+                alt_texts = ""
+                if p.record.embed and hasattr(p.record.embed, 'images'):
+                    alt_texts = "".join([img.alt for img in p.record.embed.images if img.alt]).lower()
+                
+                # wordがそのままの形で含まれている投稿だけを採用
+                if word in text or word in alt_texts:
+                    all_posts.append(p)
         except Exception as e:
-            print(f"Error searching {word}: {e}")
+            print(f"Error: {e}")
             continue
 
     # 重複除去
@@ -99,7 +114,7 @@ def get_feed_skeleton():
         # 日本語30件を優先し、その後に残りの日本語＋外国語を結合
         final_posts = jp_posts[:30] + [p for p in jp_posts[30:] + other_posts]
         # 全体でも再度スコア順にしたい場合はここを調整しますが、
-        #「日本語30件→その他」の順にしています。
+        # 「日本語30件→その他」の順にしています。
 
     # 上位50件を返却
     feed = [{"post": p.uri} for p in final_posts[:50]]
