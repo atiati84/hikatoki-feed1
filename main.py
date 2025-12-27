@@ -99,7 +99,7 @@ def get_feed_skeleton():
         # 日本語30件を優先し、その後に残りの日本語＋外国語を結合
         final_posts = jp_posts[:30] + [p for p in jp_posts[30:] + other_posts]
         # 全体でも再度スコア順にしたい場合はここを調整しますが、
-        # ご要望通り「日本語30件→その他」の順にしています。
+        #「日本語30件→その他」の順にしています。
 
     # 上位50件を返却
     feed = [{"post": p.uri} for p in final_posts[:50]]
