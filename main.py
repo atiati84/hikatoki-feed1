@@ -1,80 +1,130 @@
 import os
+import time
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from atproto import Client
 
 app = Flask(__name__)
 
-# --- 設定 ---
+# --- 基本設定 ---
 SERVICE_URL = "hikatoki-feed1.onrender.com"
 FEED_DID = f"did:web:{SERVICE_URL}"
 
+# Bluesky ログイン
 client = Client()
 client.login(os.environ.get("BSKY_HANDLE"), os.environ.get("BSKY_APP_PASSWORD"))
 
+# キーワードと除外ワード
 KEYWORDS = ["ヒカトキ", "光时", "hktk"]
-BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼"]
+BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊","暗河传"]
 
-# --- 共通の取得・フィルタリング関数 ---
+# --- キャッシュ用の変数 ---
+cache_posts = []
+cache_time = 0
+CACHE_DURATION = 60  # 60秒間キャッシュを保持
+
+# --- 投稿の取得とフィルタリング ---
 def get_filtered_posts():
+    global cache_posts, cache_time
+    
+    # 現在時刻を取得
+    now = time.time()
+    
+    # 60秒以内ならキャッシュを返す
+    if cache_posts and (now - cache_time < CACHE_DURATION):
+        return cache_posts
+
     all_posts = []
     for word in KEYWORDS:
         try:
-            res = client.app.bsky.feed.search_posts(params={"q": word, "limit": 40})
+            # 1ワードあたり多めに取得（フィルタで減るため）
+            res = client.app.bsky.feed.search_posts(params={"q": word, "limit": 50})
             all_posts.extend(res.posts)
-        except: continue
+        except Exception as e:
+            print(f"Error searching {word}: {e}")
+            continue
 
-    unique = {p.uri: p for p in all_posts}
-    # フィルタリング（除外ワード）
-    return [p for p in unique.values() if not any(bw in (p.record.text or "") for bw in BAD_WORDS)]
+    # 重複除去
+    unique_dict = {p.uri: p for p in all_posts}
+    
+    # フィルタリング（除外ワード、および空文字チェック）
+    filtered = []
+    for p in unique_dict.values():
+        text = (p.record.text or "").lower()
+        if not any(bw in text for bw in BAD_WORDS):
+            filtered.append(p)
+            
+    # キャッシュを更新
+    cache_posts = filtered
+    cache_time = now
+    return filtered
 
-# --- 人気順の重み付け計算 (SkyFeedのGravity風) ---
+# --- 重み付けスコア計算 (SkyFeedのGravity風) ---
 def score_post(post):
     likes = post.like_count or 0
     reposts = post.repost_count or 0
+    
     # 投稿からの経過時間（時間単位）を計算
     created_at = datetime.fromisoformat(post.indexed_at.replace("Z", "+00:00"))
     hours_age = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
     
-    # スコア = (いいね + リポスト) / (経過時間 + 2)^Gravity
-    # Gravityを 2.0 に設定（数字が大きいほど新しい投稿が有利）
-    gravity = 2.0
-    score = (likes + reposts) / pow((hours_age + 2), gravity)
+    # スコア = (いいね + リポスト + 1) / (経過時間 + 2)^Gravity
+    # Gravityを 2.2 に設定（お好みで 2.0 〜 4.0 で調整してください）
+    gravity = 2.2
+    score = (likes + reposts + 1) / pow((hours_age + 2), gravity)
     return score
 
-# --- メインロジック ---
+# --- メインエンドポイント ---
 @app.route("/xrpc/app.bsky.feed.getFeedSkeleton")
 def get_feed_skeleton():
-    # どのフィードが呼ばれたか確認
     feed_uri = request.args.get("feed", "")
-    posts = get_filtered_posts()
-
-    # 1. 新着順フィードの場合 (rkeyを hikatoki-new にすると想定)
-    if "hikatoki-new" in feed_uri:
-        posts.sort(key=lambda p: p.indexed_at, reverse=True)
+    all_posts = get_filtered_posts()
     
-    # 2. 人気順フィードの場合 (デフォルト)
-    else:
-        # 日本語投稿とそれ以外に分ける
-        jp_posts = [p for p in posts if (p.record.langs and "ja" in p.record.langs)]
-        other_posts = [p for p in posts if p not in jp_posts]
+    # 1. 新着順 (URIに hikatoki-new が含まれる場合)
+    if "hikatoki-new" in feed_uri:
+        # indexed_at（Blueskyが投稿を検知した時間）でソート
+        all_posts.sort(key=lambda p: p.indexed_at, reverse=True)
+        final_posts = all_posts
         
-        # それぞれスコア順に並べる
+    # 2. 人気順（デフォルト）
+    else:
+        # 日本語とそれ以外に分ける
+        jp_posts = [p for p in all_posts if (p.record.langs and "ja" in p.record.langs)]
+        other_posts = [p for p in all_posts if p not in jp_posts]
+        
+        # それぞれをGravityスコアでソート
         jp_posts.sort(key=score_post, reverse=True)
         other_posts.sort(key=score_post, reverse=True)
         
-        # 日本語30件 + 残り全部 の順で合体
-        posts = jp_posts[:30] + other_posts
+        # 日本語30件を優先し、その後に残りの日本語＋外国語を結合
+        final_posts = jp_posts[:30] + [p for p in jp_posts[30:] + other_posts]
+        # 全体でも再度スコア順にしたい場合はここを調整しますが、
+        # ご要望通り「日本語30件→その他」の順にしています。
 
-    return jsonify({"feed": [{"post": p.uri} for p in posts[:50]]})
+    # 上位50件を返却
+    feed = [{"post": p.uri} for p in final_posts[:50]]
+    return jsonify({"feed": feed})
 
+# --- DID証明 ---
 @app.route("/.well-known/did.json")
 def did_json():
     return jsonify({
         "@context": ["https://www.w3.org/ns/did/v1"],
         "id": FEED_DID,
-        "service": [{"id": "#bsky_fg", "type": "BskyFeedGenerator", "serviceEndpoint": f"https://{SERVICE_URL}"}]
+        "service": [
+            {
+                "id": "#bsky_fg",
+                "type": "BskyFeedGenerator",
+                "serviceEndpoint": f"https://{SERVICE_URL}"
+            }
+        ]
     })
 
+# --- トップページ（Renderの動作確認用） ---
+@app.route("/")
+def index():
+    return f"Hikatoki Multi-Feed Server is running!<br>Target: {KEYWORDS}"
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
