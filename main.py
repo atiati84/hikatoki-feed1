@@ -1,3 +1,4 @@
+
 import os
 import time
 from datetime import datetime, timezone
@@ -38,10 +39,11 @@ def get_filtered_posts():
     for word in KEYWORDS:
         try:
 
-            # 修正：キーワードを " で囲んでフレーズ検索にする
+            # 修正1：キーワードを " で囲んでフレーズ検索にする
             # 例: "光时" という塊で探すように指示
+            # 修正2: limit を 50 から 100（最大値）に引き上げます
             query = f'"{word}"'
-            res = client.app.bsky.feed.search_posts(params={"q": query, "limit": 50})
+            res = client.app.bsky.feed.search_posts(params={"q": query, "limit": 100})
             # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
 
             for p in res.posts:
@@ -49,8 +51,12 @@ def get_filtered_posts():
                 # 塊として含まれているか、または画像説明欄(alt)に含まれているか
                 alt_texts = ""
                 if p.record.embed and hasattr(p.record.embed, 'images'):
-                    alt_texts = "".join([img.alt for img in p.record.embed.images if img.alt]).lower()
-                
+                    # 画像説明文(alt)の取得方法をより安全に修正
+                    try:
+                        alt_texts = "".join([img.alt for img in p.record.embed.images if hasattr(img, 'alt') and img.alt]).lower()
+                    except:
+                        alt_texts = ""
+
                 # wordがそのままの形で含まれている投稿だけを採用
                 if word in text or word in alt_texts:
                     all_posts.append(p)
@@ -60,13 +66,9 @@ def get_filtered_posts():
 
     # 重複除去
     unique_dict = {p.uri: p for p in all_posts}
-    
-    # フィルタリング（除外ワード、および空文字チェック）
-    filtered = []
-    for p in unique_dict.values():
-        text = (p.record.text or "").lower()
-        if not any(bw in text for bw in BAD_WORDS):
-            filtered.append(p)
+    # フィルタリング（除外ワード、および空文字チェック）？
+    filtered = [p for p in unique_dict.values() if not any(bw in (p.record.text or "").lower() for bw in BAD_WORDS)]
+
             
     # キャッシュを更新
     cache_posts = filtered
@@ -115,8 +117,9 @@ def get_feed_skeleton():
         # 全体でも再度スコア順にしたい場合はここを調整しますが、
         # 「日本語30件→その他」の順にしています。
 
-    # 上位50件を返却
-    feed = [{"post": p.uri} for p in final_posts[:50]]
+    # 上位100件を返却
+    # ※Blueskyアプリ側で一度に表示できる上限に近づけます
+    feed = [{"post": p.uri} for p in final_posts[:100]]
     return jsonify({"feed": feed})
 
 # --- DID証明 ---
