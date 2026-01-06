@@ -1,4 +1,3 @@
-
 import os
 import time
 from datetime import datetime, timezone
@@ -37,15 +36,24 @@ def get_filtered_posts():
 
     all_posts = []
     for word in KEYWORDS:
+        cursor = None  # 次のページを読み込むためのポインタ
+        # 各単語で2回（計200件分）検索を試みる
+        for _ in range(2):
         try:
-
             # 修正1：キーワードを " で囲んでフレーズ検索にする
             # 例: "光时" という塊で探すように指示
             # 修正2: limit を 50 から 100（最大値）に引き上げます
             query = f'"{word}"'
-            res = client.app.bsky.feed.search_posts(params={"q": query, "limit": 100})
-            # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
+            # cursorを指定することで、前回の続きから取得できる
+            res = client.app.bsky.feed.search_posts(params={
+                "q": query, 
+                "limit": 100, 
+                "cursor": cursor
+            })
+            if not res.posts:
+                break
 
+            # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
             for p in res.posts:
                 text = (p.record.text or "").lower()
                 # 塊として含まれているか、または画像説明欄(alt)に含まれているか
@@ -60,15 +68,20 @@ def get_filtered_posts():
                 # wordがそのままの形で含まれている投稿だけを採用
                 if word in text or word in alt_texts:
                     all_posts.append(p)
+            # 次のページの情報を更新
+            cursor = res.cursor
+            if not cursor:
+                break
+
         except Exception as e:
             print(f"Error: {e}")
             continue
 
     # 重複除去
     unique_dict = {p.uri: p for p in all_posts}
-    # フィルタリング（除外ワード、および空文字チェック）？
-    filtered = [p for p in unique_dict.values() if not any(bw in (p.record.text or "").lower() for bw in BAD_WORDS)]
 
+    # 除外フィルタ（除外ワード、および空文字チェック）
+    filtered = [p for p in unique_dict.values() if not any(bw in (p.record.text or "").lower() for bw in BAD_WORDS)]
             
     # キャッシュを更新
     cache_posts = filtered
