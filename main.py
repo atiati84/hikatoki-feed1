@@ -15,7 +15,7 @@ client = Client()
 client.login(os.environ.get("BSKY_HANDLE"), os.environ.get("BSKY_APP_PASSWORD"))
 
 # キーワードと除外ワード
-KEYWORDS = ["ヒカトキ", "hktk"]
+KEYWORDS = ["ヒカトキ", "hktk", "유진시우", "光时"]
 BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊","暗河传","bandcamp"]
 
 # --- キャッシュ用の変数 ---
