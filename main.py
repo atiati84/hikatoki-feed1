@@ -37,45 +37,46 @@ def get_filtered_posts():
     all_posts = []
     for word in KEYWORDS:
         cursor = None  # 次のページを読み込むためのポインタ
+        
         # 各単語で2回（計200件分）検索を試みる
         for _ in range(2):
-        try:
-            # 修正1：キーワードを " で囲んでフレーズ検索にする
-            # 例: "光时" という塊で探すように指示
-            # 修正2: limit を 50 から 100（最大値）に引き上げます
-            query = f'"{word}"'
-            # cursorを指定することで、前回の続きから取得できる
-            res = client.app.bsky.feed.search_posts(params={
-                "q": query, 
-                "limit": 100, 
-                "cursor": cursor
-            })
-            if not res.posts:
-                break
+            try:
+                # 修正1：キーワードを " で囲んでフレーズ検索にする
+                # 例: "光时" という塊で探すように指示
+                # 修正2: limit を 50 から 100（最大値）に引き上げます
+                query = f'"{word}"'
+                # cursorを指定することで、前回の続きから取得できる
+                res = client.app.bsky.feed.search_posts(params={
+                    "q": query, 
+                    "limit": 100, 
+                    "cursor": cursor
+                })
+                if not res.posts:
+                    break
 
-            # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
-            for p in res.posts:
-                text = (p.record.text or "").lower()
-                # 塊として含まれているか、または画像説明欄(alt)に含まれているか
-                alt_texts = ""
-                if p.record.embed and hasattr(p.record.embed, 'images'):
-                    # 画像説明文(alt)の取得方法をより安全に修正
-                    try:
-                        alt_texts = "".join([img.alt for img in p.record.embed.images if hasattr(img, 'alt') and img.alt]).lower()
-                    except:
-                        alt_texts = ""
+                # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
+                for p in res.posts:
+                    text = (p.record.text or "").lower()
+                    # 塊として含まれているか、または画像説明欄(alt)に含まれているか
+                    alt_texts = ""
+                    if p.record.embed and hasattr(p.record.embed, 'images'):
+                        # 画像説明文(alt)の取得方法をより安全に修正
+                        try:
+                            alt_texts = "".join([img.alt for img in p.record.embed.images if hasattr(img, 'alt') and img.alt]).lower()
+                        except:
+                            alt_texts = ""
 
-                # wordがそのままの形で含まれている投稿だけを採用
-                if word in text or word in alt_texts:
-                    all_posts.append(p)
-            # 次のページの情報を更新
-            cursor = res.cursor
-            if not cursor:
-                break
+                    # wordがそのままの形で含まれている投稿だけを採用
+                    if word in text or word in alt_texts:
+                        all_posts.append(p)
+                # 次のページの情報を更新
+                cursor = res.cursor
+                if not cursor:
+                    break
 
-        except Exception as e:
-            print(f"Error: {e}")
-            continue
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
 
     # 重複除去
     unique_dict = {p.uri: p for p in all_posts}
