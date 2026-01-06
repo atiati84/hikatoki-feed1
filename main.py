@@ -26,65 +26,43 @@ CACHE_DURATION = 20  # ○秒間キャッシュを保持
 # --- 投稿の取得とフィルタリング ---
 def get_filtered_posts():
     global cache_posts, cache_time
-    
-    # 現在時刻を取得
     now = time.time()
-    
-    # 60秒以内ならキャッシュを返す
     if cache_posts and (now - cache_time < CACHE_DURATION):
         return cache_posts
 
     all_posts = []
     for word in KEYWORDS:
-        cursor = None  # 次のページを読み込むためのポインタ
-        
-        # 各単語で2回（計200件分）検索を試みる
-        for _ in range(2):
-            try:
-                # 修正1：キーワードを " で囲んでフレーズ検索にする
-                # 例: "光时" という塊で探すように指示
-                # 修正2: limit を 50 から 100（最大値）に引き上げます
-                query = f'"{word}"'
-                # cursorを指定することで、前回の続きから取得できる
-                res = client.app.bsky.feed.search_posts(params={
-                    "q": query, 
-                    "limit": 100, 
-                    "cursor": cursor
-                })
-                if not res.posts:
-                    break
-
-                # さらに厳密にチェック：本文にその塊が含まれているものだけ残す
-                for p in res.posts:
-                    text = (p.record.text or "").lower()
-                    # 塊として含まれているか、または画像説明欄(alt)に含まれているか
-                    alt_texts = ""
-                    if p.record.embed and hasattr(p.record.embed, 'images'):
-                        # 画像説明文(alt)の取得方法をより安全に修正
-                        try:
-                            alt_texts = "".join([img.alt for img in p.record.embed.images if hasattr(img, 'alt') and img.alt]).lower()
-                        except:
-                            alt_texts = ""
-
-                    # wordがそのままの形で含まれている投稿だけを採用
-                    if word in text or word in alt_texts:
-                        all_posts.append(p)
-                # 次のページの情報を更新
-                cursor = res.cursor
-                if not cursor:
-                    break
-
-            except Exception as e:
-                print(f"Error: {e}")
-                continue
+        try:
+            # 作戦1: " を外して、検索エンジンには「広めに候補を出して」と頼む
+            res = client.app.bsky.feed.search_posts(params={
+                "q": word, 
+                "limit": 100 # 1回で最大100件取得
+            })
+            
+            for p in res.posts:
+                text = (p.record.text or "").lower()
+                alt_texts = ""
+                # Altテキストの取得（安全な書き方に整理）
+                embed = getattr(p.record, 'embed', None)
+                if embed and hasattr(embed, 'images'):
+                    alt_texts = "".join([img.alt for img in embed.images if getattr(img, 'alt', None)]).lower()
+                
+                # ここで「文字が繋がっているか」を厳密にチェック
+                # これがあるから、検索クエリに " がなくても大丈夫！
+                if word.lower() in text or word.lower() in alt_texts:
+                    all_posts.append(p)
+        except Exception as e:
+            print(f"Error: {e}")
+            continue
 
     # 重複除去
     unique_dict = {p.uri: p for p in all_posts}
-
-    # 除外フィルタ（除外ワード、および空文字チェック）
+    # フィルタリング（BAD_WORDS）
     filtered = [p for p in unique_dict.values() if not any(bw in (p.record.text or "").lower() for bw in BAD_WORDS)]
-            
-    # キャッシュを更新
+    
+    # 件数が少ない場合、もし必要ならここで追加のログを出して確認もできます
+    print(f"DEBUG: Found {len(filtered)} posts")
+
     cache_posts = filtered
     cache_time = now
     return filtered
