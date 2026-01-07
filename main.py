@@ -6,134 +6,111 @@ from atproto import Client
 
 app = Flask(__name__)
 
-# --- 基本設定 ---
+# --- 1. 基本設定（ここを編集すれば全てに反映されます） ---
 SERVICE_URL = "hikatoki-feed1.onrender.com"
 FEED_DID = f"did:web:{SERVICE_URL}"
 
-# Bluesky ログイン
+# 検索ワード設定
+HKTK_KEYWORDS = ["ヒカトキ", "hktk", "유진시우", "光时"]
+NOVEL_KEYWORDS = ["創作BL", "#創作BL"] # 小説フィード用
+BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊", "暗河传", "bandcamp"]
+
+# キャッシュ設定
+cache = {} # フィードごとにキャッシュを持たせる
+CACHE_DURATION = 20
+
+# --- 2. 共通ツール（便利な部品たち） ---
+
 client = Client()
 client.login(os.environ.get("BSKY_HANDLE"), os.environ.get("BSKY_APP_PASSWORD"))
 
-# キーワードと除外ワード
-KEYWORDS = ["ヒカトキ", "hktk", "유진시우", "光时"]
-BAD_WORDS = ["母畜", "野裸", "天体", "鸡巴", "射精", "打飞机", "黄推", "傻逼", "裸聊","暗河传","bandcamp"]
+def is_clean(post):
+    """除外ワードが含まれていないかチェックする部品"""
+    text = (post.record.text or "").lower()
+    return not any(bw.lower() in text for bw in BAD_WORDS)
 
-# --- キャッシュ用の変数 ---
-cache_posts = []
-cache_time = 0
-CACHE_DURATION = 20  # ○秒間キャッシュを保持
-
-# --- 投稿の取得とフィルタリング ---
-def get_filtered_posts():
-    global cache_posts, cache_time
-    now = time.time()
-    if cache_posts and (now - cache_time < CACHE_DURATION):
-        return cache_posts
-
+def get_base_posts(keywords, limit=100):
+    """指定したワードで検索し、重複を除去して返す部品"""
     all_posts = []
-    for word in KEYWORDS:
+    for word in keywords:
         try:
-            # 作戦1: " を外して、検索エンジンには「広めに候補を出して」と頼む
-            res = client.app.bsky.feed.search_posts(params={
-                "q": word, 
-                "limit": 100 # 1回で最大100件取得
-            })
-            
+            # 30件の壁を壊すため、確実に100件要求
+            res = client.app.bsky.feed.search_posts(q=word, limit=limit)
             for p in res.posts:
                 text = (p.record.text or "").lower()
-                alt_texts = ""
-                # Altテキストの取得（安全な書き方に整理）
-                embed = getattr(p.record, 'embed', None)
-                if embed and hasattr(embed, 'images'):
-                    alt_texts = "".join([img.alt for img in embed.images if getattr(img, 'alt', None)]).lower()
-                
-                # ここで「文字が繋がっているか」を厳密にチェック
-                # これがあるから、検索クエリに " がなくても大丈夫！
-                if word.lower() in text or word.lower() in alt_texts:
+                # 厳密なキーワード一致（フレーズチェック）
+                if word.lower() in text:
                     all_posts.append(p)
-        except Exception as e:
-            print(f"Error: {e}")
-            continue
-
+        except: continue
     # 重複除去
-    unique_dict = {p.uri: p for p in all_posts}
-    # フィルタリング（BAD_WORDS）
-    filtered = [p for p in unique_dict.values() if not any(bw in (p.record.text or "").lower() for bw in BAD_WORDS)]
-    
-    # 件数が少ない場合、もし必要ならここで追加のログを出して確認もできます
-    print(f"DEBUG: Found {len(filtered)} posts")
+    unique = {p.uri: p for p in all_posts}
+    return list(unique.values())
 
-    cache_posts = filtered
-    cache_time = now
-    return filtered
-
-# --- 重み付けスコア計算 (SkyFeedのGravity風) ---
-def score_post(post):
+def score_post(post, gravity=2.2):
+    """SkyFeed風のスコア計算部品"""
     likes = post.like_count or 0
     reposts = post.repost_count or 0
-    
-    # 投稿からの経過時間（時間単位）を計算
     created_at = datetime.fromisoformat(post.indexed_at.replace("Z", "+00:00"))
     hours_age = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
-    
-    # スコア = (いいね + リポスト + 1) / (経過時間 + 2)^Gravity
-    # Gravityを 2.2 に設定（お好みで 2.0 〜 4.0 で調整してください）
-    gravity = 2.2
-    score = (likes + reposts + 1) / pow((hours_age + 2), gravity)
-    return score
+    return (likes + reposts + 1) / pow((hours_age + 2), gravity)
 
-# --- メインエンドポイント ---
+# --- 3. 各フィードの専用ロジック ---
+
+def logic_hikatoki(is_new=False):
+    """ヒカトキフィード（人気順 / 新着順）"""
+    posts = get_base_posts(HKTK_KEYWORDS)
+    posts = [p for p in posts if is_clean(p)]
+
+    if is_new:
+        posts.sort(key=lambda p: p.indexed_at, reverse=True)
+    else:
+        # 日本語優先の人気順
+        jp = sorted([p for p in posts if p.record.langs and "ja" in p.record.langs], key=score_post, reverse=True)
+        others = sorted([p for p in posts if p not in jp], key=score_post, reverse=True)
+        posts = jp[:30] + others
+    return posts
+
+def logic_novel():
+    """100文字以上の小説フィード"""
+    posts = get_base_posts(NOVEL_KEYWORDS)
+    # 100文字以上、かつクリーンな投稿のみ
+    posts = [p for p in posts if is_clean(p) and len(p.record.text or "") >= 100]
+    # 小説は新しい順が嬉しい
+    posts.sort(key=lambda p: p.indexed_at, reverse=True)
+    return posts
+
+# --- 4. サーバーのメイン口 ---
+
 @app.route("/xrpc/app.bsky.feed.getFeedSkeleton")
 def get_feed_skeleton():
     feed_uri = request.args.get("feed", "")
-    all_posts = get_filtered_posts()
-    
-    # 1. 新着順 (URIに hikatoki-new が含まれる場合)
-    if "hikatoki-new" in feed_uri:
-        # indexed_at（Blueskyが投稿を検知した時間）でソート
-        all_posts.sort(key=lambda p: p.indexed_at, reverse=True)
-        final_posts = all_posts
-        
-    # 2. 人気順（デフォルト）
-    else:
-        # 日本語とそれ以外に分ける
-        jp_posts = [p for p in all_posts if (p.record.langs and "ja" in p.record.langs)]
-        other_posts = [p for p in all_posts if p not in jp_posts]
-        
-        # それぞれをGravityスコアでソート
-        jp_posts.sort(key=score_post, reverse=True)
-        other_posts.sort(key=score_post, reverse=True)
-        
-        # 日本語30件を優先し、その後に残りの日本語＋外国語を結合
-        final_posts = jp_posts[:30] + [p for p in jp_posts[30:] + other_posts]
-        # 全体でも再度スコア順にしたい場合はここを調整しますが、
-        # 「日本語30件→その他」の順にしています。
+    now = time.time()
 
-    # 上位100件を返却
-    # ※Blueskyアプリ側で一度に表示できる上限に近づけます
-    feed = [{"post": p.uri} for p in final_posts[:100]]
+    # キャッシュチェック
+    if feed_uri in cache and (now - cache[feed_uri]['time'] < CACHE_DURATION):
+        result_posts = cache[feed_uri]['posts']
+    else:
+        # URL（rkey）に応じてロジックを切り替え
+        if "hikatoki-new" in feed_uri:
+            result_posts = logic_hikatoki(is_new=True)
+        elif "hikatoki-novel" in feed_uri:
+            result_posts = logic_novel()
+        else:
+            result_posts = logic_hikatoki(is_new=False)
+        
+        # キャッシュに保存
+        cache[feed_uri] = {'posts': result_posts, 'time': now}
+
+    feed = [{"post": p.uri} for p in result_posts[:100]]
     return jsonify({"feed": feed})
 
-# --- DID証明 ---
 @app.route("/.well-known/did.json")
 def did_json():
-    return jsonify({
-        "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": FEED_DID,
-        "service": [
-            {
-                "id": "#bsky_fg",
-                "type": "BskyFeedGenerator",
-                "serviceEndpoint": f"https://{SERVICE_URL}"
-            }
-        ]
-    })
+    return jsonify({"@context": ["https://www.w3.org/ns/did/v1"],"id": FEED_DID,"service": [{"id": "#bsky_fg","type": "BskyFeedGenerator","serviceEndpoint": f"https://{SERVICE_URL}"}]})
 
-# --- トップページ（Renderの動作確認用） ---
 @app.route("/")
 def index():
-    return f"Hikatoki Multi-Feed Server is running!<br>Target: {KEYWORDS}"
+    return "Hikatoki & Novel Multi-Feed Server is Active!"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
