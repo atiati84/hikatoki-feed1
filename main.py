@@ -34,14 +34,31 @@ def get_base_posts(keywords, limit=100):
     all_posts = []
     for word in keywords:
         try:
-            # 30件の壁を壊すため、確実に100件要求
+            # 検索クエリ自体を少し工夫します
             res = client.app.bsky.feed.search_posts(q=word, limit=limit)
+            
+            if not res.posts:
+                continue
+
             for p in res.posts:
                 text = (p.record.text or "").lower()
-                # 厳密なキーワード一致（フレーズチェック）
-                if word.lower() in text:
+                # 厳密すぎるチェックを外し、検索エンジンを信頼して一旦すべて入れる
+                # ただし、最低限そのワードが含まれているかは確認する
+                if word.lower() in text or word.lower().replace("#", "") in text:
                     all_posts.append(p)
-        except: continue
+                else:
+                    # もし上記でダメなら、Altテキスト（画像説明）も探す
+                    alt_texts = ""
+                    embed = getattr(p.record, 'embed', None)
+                    if embed and hasattr(embed, 'images'):
+                        alt_texts = "".join([img.alt for img in embed.images if getattr(img, 'alt', None)]).lower()
+                    if word.lower() in alt_texts:
+                        all_posts.append(p)
+
+        except Exception as e:
+            print(f"Error searching {word}: {e}")
+            continue
+            
     # 重複除去
     unique = {p.uri: p for p in all_posts}
     return list(unique.values())
