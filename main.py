@@ -93,7 +93,7 @@ def get_feed_skeleton():
         # URL（rkey）に応じてロジックを切り替え
         if "hikatoki-new" in feed_uri:
             result_posts = logic_hikatoki(is_new=True)
-        elif "hikatoki-novel" in feed_uri:
+        elif "sousaku-novel" in feed_uri:
             result_posts = logic_novel()
         else:
             result_posts = logic_hikatoki(is_new=False)
