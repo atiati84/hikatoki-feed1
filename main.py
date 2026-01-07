@@ -41,9 +41,14 @@ def get_all_filtered_posts(keywords, is_novel=False):
             for p in res.posts:
                 text = (p.record.text or "").lower()
                 
-                # 小説フィードの場合：100文字以上かチェック
-                if is_novel and len(text) < 100:
-                    continue
+                # 小説フィードの場合の追加条件
+                if is_novel:
+                    # 1. 100文字以上かチェック
+                    if len(text) < 100:
+                        continue
+                    # 2. 日本語設定があるかチェック (ja が含まれていない場合はスキップ)
+                    if not (p.record.langs and "ja" in p.record.langs):
+                        continue
                 
                 # キーワードが含まれているか
                 if word.lower() in text:
@@ -69,7 +74,7 @@ def get_feed_skeleton():
     # どのフィードを求められているか判定
     if "hikatoki-novel" in feed_uri:
         target = "novel"
-        keywords = ["創作BL", "#創作BL"]
+        keywords = ["創作BL", "#創作BL", "#創作bl小説"]
     else:
         target = "hikatoki"
         keywords = ["ヒカトキ", "hktk", "유진시우", "光时"]
