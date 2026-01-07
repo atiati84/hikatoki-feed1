@@ -34,26 +34,15 @@ def get_base_posts(keywords, limit=100):
     all_posts = []
     for word in keywords:
         try:
-            # 検索クエリ自体を少し工夫します
+            # 検索ワードをそのまま投げる
             res = client.app.bsky.feed.search_posts(q=word, limit=limit)
             
             if not res.posts:
                 continue
 
-            for p in res.posts:
-                text = (p.record.text or "").lower()
-                # 厳密すぎるチェックを外し、検索エンジンを信頼して一旦すべて入れる
-                # ただし、最低限そのワードが含まれているかは確認する
-                if word.lower() in text or word.lower().replace("#", "") in text:
-                    all_posts.append(p)
-                else:
-                    # もし上記でダメなら、Altテキスト（画像説明）も探す
-                    alt_texts = ""
-                    embed = getattr(p.record, 'embed', None)
-                    if embed and hasattr(embed, 'images'):
-                        alt_texts = "".join([img.alt for img in embed.images if getattr(img, 'alt', None)]).lower()
-                    if word.lower() in alt_texts:
-                        all_posts.append(p)
+            # 判定を大幅に緩和：検索でヒットしたものは原則採用する
+            # (検索エンジンが優秀なので、これだけでも十分精度が出ます)
+            all_posts.extend(res.posts)
 
         except Exception as e:
             print(f"Error searching {word}: {e}")
@@ -110,7 +99,7 @@ def get_feed_skeleton():
         # URL（rkey）に応じてロジックを切り替え
         if "hikatoki-new" in feed_uri:
             result_posts = logic_hikatoki(is_new=True)
-        elif "sousaku-novel" in feed_uri:
+        elif "hikatoki-novel" in feed_uri:
             result_posts = logic_novel()
         else:
             result_posts = logic_hikatoki(is_new=False)
